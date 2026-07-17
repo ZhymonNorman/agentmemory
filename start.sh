@@ -124,10 +124,27 @@ echo "[railway] Launching agentmemory..."
 export VIEWER_PUBLIC_PORT="${VIEWER_PUBLIC_PORT:-8083}"
 export VIEWER_INTERNAL_PORT="${VIEWER_INTERNAL_PORT:-3113}"
 
-echo "[railway] Starting viewer proxy:"
-echo "[railway] 0.0.0.0:${VIEWER_PUBLIC_PORT} -> 127.0.0.1:${VIEWER_INTERNAL_PORT}"
+# The viewer refuses any Host header outside its allowlist as a
+# DNS-rebinding defence (src/viewer/server.ts isHostAllowed), and on a
+# loopback bind that allowlist only covers localhost/127.0.0.1. Caddy
+# forwards the browser's original Host, so the public caddy domain must
+# be listed explicitly or every proxied request is refused. Allow the
+# private hop too, in case the proxy rewrites Host to the upstream.
+VIEWER_HOSTS_DEFAULT="${RAILWAY_PRIVATE_DOMAIN:-agentmemory.railway.internal}:${VIEWER_PUBLIC_PORT}"
+if [ -n "${RAILWAY_SERVICE_AGENTMEMORY_VIEWER_CADDY_URL:-}" ]; then
+  VIEWER_HOSTS_DEFAULT="${VIEWER_HOSTS_DEFAULT},${RAILWAY_SERVICE_AGENTMEMORY_VIEWER_CADDY_URL}"
+fi
+export VIEWER_ALLOWED_HOSTS="${VIEWER_ALLOWED_HOSTS:-${VIEWER_HOSTS_DEFAULT}}"
 
-socat TCP-LISTEN:${VIEWER_PUBLIC_PORT},bind=0.0.0.0,fork,reuseaddr TCP:127.0.0.1:${VIEWER_INTERNAL_PORT} &
+echo "[railway] VIEWER_ALLOWED_HOSTS=${VIEWER_ALLOWED_HOSTS}"
+echo "[railway] Starting viewer proxy:"
+echo "[railway] [::]:${VIEWER_PUBLIC_PORT} (dual-stack) -> 127.0.0.1:${VIEWER_INTERNAL_PORT}"
+
+# Bind IPv6 with ipv6only=0 (dual-stack). Railway environments created
+# before 2025-10-16 resolve *.railway.internal to IPv6 addresses ONLY,
+# so an IPv4-only 0.0.0.0 listener is unreachable over private
+# networking and the caddy service in front of it 502s.
+socat TCP6-LISTEN:${VIEWER_PUBLIC_PORT},ipv6only=0,fork,reuseaddr TCP:127.0.0.1:${VIEWER_INTERNAL_PORT} &
 
 exec agentmemory \
   --port "${REST_PORT}" \
