@@ -27,7 +27,6 @@ https://railway.com/deploy/agentmemory-self-hosted-memory-for-ai-ag
 ## Recommended Variables
 
 ```env
-PORT="8080"
 NODE_ENV="production"
 III_DATA_DIR="/data"
 AGENTMEMORY_URL="https://${{RAILWAY_PUBLIC_DOMAIN}}"
@@ -35,6 +34,26 @@ AGENTMEMORY_SECRET="${{secret(32)}}"
 AGENTMEMORY_DATA_DIR="/data"
 AGENTMEMORY_REQUIRE_HTTPS="1"
 ```
+
+### Ports
+
+agentmemory runs on its canonical port quartet, all derived from the
+REST anchor: streams = REST+1, viewer = REST+2, and the iii-engine
+bridge = REST+46023.
+
+| Port | Purpose | Exposure |
+|---|---|---|
+| `3111` | REST API | Railway service domain — **set the domain's target port to 3111** |
+| `3112` | Streams | internal |
+| `3113` | Viewer (binds `127.0.0.1`) | republished by socat on `8083` |
+| `49134` | iii-engine bridge (WebSocket) | container-local only |
+
+Do **not** set `PORT` and re-anchor the REST API onto it. The engine
+binary always binds its bridge on the fixed default `49134`, so a REST
+anchor of `8080` makes the worker dial `ws://localhost:54103`, where
+nothing listens. The worker then never registers its functions and
+every `/agentmemory/*` route returns `404` even though the container
+looks healthy.
 
 ## Test the API
 

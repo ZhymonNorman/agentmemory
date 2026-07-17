@@ -32,9 +32,12 @@ RUN mkdir -p /data /app
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-EXPOSE 8080
+# REST API (Railway domain targets this), streams, viewer, and the
+# socat-republished viewer that the caddy service proxies. The engine
+# bridge (49134) stays container-local and is deliberately not exposed.
+EXPOSE 3111
 EXPOSE 3112
+EXPOSE 3113
 EXPOSE 8083
-EXPOSE 49134
 
 CMD ["/app/start.sh"]

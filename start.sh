@@ -4,8 +4,14 @@ set -euo pipefail
 export HOME=/app
 export PATH="/app/.local/bin:${PATH}"
 
-# Railway public API port.
-export PORT="${PORT:-8080}"
+# agentmemory derives its whole port quartet from the REST anchor:
+# streams = REST+1, viewer = REST+2, iii-engine bridge = REST+46023.
+# The engine binary always binds its bridge on the fixed default 49134,
+# so only a 3111 anchor lines up. Anchoring on Railway's $PORT (8080)
+# made the worker dial ws://localhost:54103, where nothing listens, so
+# it never registered and every /agentmemory/* route returned 404.
+# The Railway service domain must target container port 3111.
+REST_PORT=3111
 
 # Persistent Railway volume paths.
 export III_DATA_DIR="${III_DATA_DIR:-/data}"
@@ -16,7 +22,7 @@ mkdir -p /app
 mkdir -p /app/.agentmemory
 
 echo "[railway] Starting agentmemory"
-echo "[railway] PORT=${PORT}"
+echo "[railway] REST_PORT=${REST_PORT}"
 echo "[railway] HOME=${HOME}"
 echo "[railway] III_DATA_DIR=${III_DATA_DIR}"
 echo "[railway] AGENTMEMORY_DATA_DIR=${AGENTMEMORY_DATA_DIR}"
@@ -45,13 +51,14 @@ fi
 # Start from Agentmemory's official Docker config.
 cp "$SOURCE_CONFIG" "$RAILWAY_CONFIG"
 
-# Only expose the REST API for Railway.
+# iii-config.docker.yaml already binds 0.0.0.0 and uses /data paths;
+# these stay as a guard in case the upstream source config changes.
 # Do NOT patch viewer ports or compiled JS files.
 sed -i "s/host: 127.0.0.1/host: 0.0.0.0/g" "$RAILWAY_CONFIG"
 sed -i "s/host: localhost/host: 0.0.0.0/g" "$RAILWAY_CONFIG"
 
-# Adapt the REST API port to Railway's public PORT.
-sed -i "0,/port: 3111/s//port: ${PORT}/" "$RAILWAY_CONFIG"
+# The REST port stays at the config's canonical 3111 so the engine
+# bridge (49134) and streams (3112) stay aligned with the anchor.
 
 # Agentmemory internally loads this default config path.
 cp "$RAILWAY_CONFIG" "$DEFAULT_CONFIG"
@@ -63,9 +70,10 @@ echo "[railway] Effective config preview:"
 cat "$DEFAULT_CONFIG"
 
 echo "[railway] Expected:"
-echo "[railway] API listener should be 0.0.0.0:${PORT}"
-echo "[railway] Stream listener should be whatever Agentmemory config defines"
-echo "[railway] Viewer should use Agentmemory defaults"
+echo "[railway] API listener should be 0.0.0.0:${REST_PORT}"
+echo "[railway] Stream listener should be 0.0.0.0:3112"
+echo "[railway] Engine bridge should be ws://localhost:49134"
+echo "[railway] Viewer should be 127.0.0.1:3113 (republished via socat)"
 
 echo "[railway] Writing /app/.agentmemory/.env from Railway variables..."
 
@@ -109,8 +117,12 @@ node -e 'const os=require("os"); console.log(os.homedir())'
 
 echo "[railway] Launching agentmemory..."
 
+# The viewer binds 127.0.0.1 (src/viewer/server.ts resolveViewerHost),
+# so Railway's network can't reach it directly. socat republishes it on
+# 8083, which the caddy service fronts with basic auth. The viewer sits
+# at REST+2 = 3113, so it moves with the anchor.
 export VIEWER_PUBLIC_PORT="${VIEWER_PUBLIC_PORT:-8083}"
-export VIEWER_INTERNAL_PORT="${VIEWER_INTERNAL_PORT:-8082}"
+export VIEWER_INTERNAL_PORT="${VIEWER_INTERNAL_PORT:-3113}"
 
 echo "[railway] Starting viewer proxy:"
 echo "[railway] 0.0.0.0:${VIEWER_PUBLIC_PORT} -> 127.0.0.1:${VIEWER_INTERNAL_PORT}"
@@ -118,5 +130,5 @@ echo "[railway] 0.0.0.0:${VIEWER_PUBLIC_PORT} -> 127.0.0.1:${VIEWER_INTERNAL_POR
 socat TCP-LISTEN:${VIEWER_PUBLIC_PORT},bind=0.0.0.0,fork,reuseaddr TCP:127.0.0.1:${VIEWER_INTERNAL_PORT} &
 
 exec agentmemory \
-  --port "${PORT}" \
+  --port "${REST_PORT}" \
   --verbose
